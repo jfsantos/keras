@@ -10,6 +10,8 @@ import time, copy
 from .utils.generic_utils import Progbar
 from six.moves import range
 
+import os
+
 def standardize_y(y):
     if not hasattr(y, 'shape'):
         y = np.asarray(y)
@@ -88,7 +90,8 @@ class Sequential(object):
 
 
     def fit(self, X, y, batch_size=128, nb_epoch=100, verbose=1,
-            validation_split=0., validation_data=None, shuffle=True, show_accuracy=False):
+            validation_split=0., validation_data=None, shuffle=True, show_accuracy=False,
+            snapshot_config=None):
         y = standardize_y(y)
 
         do_validation = False
@@ -114,6 +117,17 @@ class Sequential(object):
                     print("Train on %d samples, validate on %d samples" % (len(y), len(y_val)))
         
         index_array = np.arange(len(X))
+
+        # Snapshots?
+        if snapshot_config is not None:
+            do_snapshots = True
+            snapshot_folder = snapshot_config['folder']        # path to the snapshot folder, will be created if does not exist
+            #snapshot_frequency = snapshot_config['frequency'] # 'epoch', or # of iterations
+            #snapshot_optimizer = snapshot_config['optimizer'] # if True, we will pickle the optimizer with each snapshot
+
+            if not os.path.exists(snapshot_folder):
+                os.mkdir(snapshot_folder)
+
         for epoch in range(nb_epoch):
             if verbose:
                 print('Epoch', epoch)
@@ -149,6 +163,9 @@ class Sequential(object):
                 # logging
                 if verbose:
                     progbar.update(batch_end, log_values)
+                
+            if do_snapshots:
+                self.save_weights(os.path.join(snapshot_folder, 'snapshot_{}.hdf5'.format(epoch)))
 
             
     def predict_proba(self, X, batch_size=128, verbose=1):
