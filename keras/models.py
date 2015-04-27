@@ -127,6 +127,8 @@ class Sequential(object):
 
             if not os.path.exists(snapshot_folder):
                 os.mkdir(snapshot_folder)
+        else:
+            do_snapshots = False
 
         for epoch in range(nb_epoch):
             if verbose:
