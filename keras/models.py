@@ -6,6 +6,8 @@ import numpy as np
 
 from . import optimizers
 from . import objectives
+from . import regularizers
+from . import constraints
 import time, copy
 from .utils.generic_utils import Progbar
 from six.moves import range
@@ -23,28 +25,71 @@ def make_batches(size, batch_size):
     nb_batch = int(np.ceil(size/float(batch_size)))
     return [(i*batch_size, min(size, (i+1)*batch_size)) for i in range(0, nb_batch)]
 
+def ndim_tensor(ndim):
+    if ndim == 2:
+        return T.matrix()
+    elif ndim == 3:
+        return T.tensor3()
+    elif ndim == 4:
+        return T.tensor4()
+    return T.matrix()
+
 class Sequential(object):
     def __init__(self):
         self.layers = []
         self.params = []
+        self.regularizers = []
+        self.constraints = []
 
     def add(self, layer):
         self.layers.append(layer)
         if len(self.layers) > 1:
             self.layers[-1].connect(self.layers[-2])
         self.params += [p for p in layer.params]
+        
+        if hasattr(layer, 'regularizers') and len(layer.regularizers) == len(layer.params):
+            for r in layer.regularizers:
+                if r:
+                    self.regularizers.append(r)
+                else:
+                    self.regularizers.append(regularizers.identity)
+        elif hasattr(layer, 'regularizer') and layer.regularizer:
+            self.regularizers += [layer.regularizer for _ in range(len(layer.params))]
+        else:
+            self.regularizers += [regularizers.identity for _ in range(len(layer.params))]
 
-    def compile(self, optimizer, loss, class_mode="categorical"):
+        if hasattr(layer, 'constraints') and len(layer.constraints) == len(layer.params):
+            for c in layer.constraints:
+                if c:
+                    self.constraints.append(c)
+                else:
+                    self.constraints.append(constraints.identity)
+        elif hasattr(layer, 'constraint') and layer.constraint:
+            self.constraints += [layer.constraint for _ in range(len(layer.params))]
+        else:
+            self.constraints += [constraints.identity for _ in range(len(layer.params))]
+
+    def get_output(self, train):
+        return self.layers[-1].get_output(train)
+
+    def compile(self, optimizer, loss, class_mode="categorical", y_dim_components=1):
         self.optimizer = optimizers.get(optimizer)
         self.loss = objectives.get(loss)
 
-        self.X = self.layers[0].input # input of model 
-        # (first layer must have an "input" attribute!)
-        self.y_train = self.layers[-1].output(train=True)
-        self.y_test = self.layers[-1].output(train=False)
+        # input of model 
+        if not hasattr(self.layers[0], 'input'):
+            for l in self.layers:
+                if hasattr(l, 'input'):
+                    break
+            ndim = l.input.ndim 
+            self.layers[0].input = ndim_tensor(ndim)
+        self.X = self.layers[0].input
+
+        self.y_train = self.get_output(train=True)
+        self.y_test = self.get_output(train=False)
 
         # output of model
-        self.y = T.matrix() # TODO: support for custom output shapes
+        self.y = ndim_tensor(y_dim_components+1)
 
         train_loss = self.loss(self.y, self.y_train)
         test_score = self.loss(self.y, self.y_test)
@@ -60,7 +105,7 @@ class Sequential(object):
             raise Exception("Invalid class mode:" + str(class_mode))
         self.class_mode = class_mode
 
-        updates = self.optimizer.get_updates(self.params, train_loss)
+        updates = self.optimizer.get_updates(self.params, self.regularizers, self.constraints, train_loss)
 
         self._train = theano.function([self.X, self.y], train_loss, 
             updates=updates, allow_input_downcast=True)
@@ -72,6 +117,7 @@ class Sequential(object):
             allow_input_downcast=True)
         self._test_with_acc = theano.function([self.X, self.y], [test_score, test_accuracy], 
             allow_input_downcast=True)
+
 
     def train(self, X, y, accuracy=False):
         y = standardize_y(y)
@@ -116,6 +162,14 @@ class Sequential(object):
                 if verbose:
                     print("Train on %d samples, validate on %d samples" % (len(y), len(y_val)))
         
+        history = {'epoch':[], 'loss':[]}
+        if show_accuracy:
+            history['acc'] = []
+        if do_validation:
+            history['val_loss'] = []
+            if show_accuracy:
+                history['val_acc'] = []
+
         index_array = np.arange(len(X))
 
         # Snapshots?
@@ -137,21 +191,29 @@ class Sequential(object):
             if shuffle:
                 np.random.shuffle(index_array)
 
+            av_loss = 0.
+            av_acc = 0.
+            seen = 0
+
             batches = make_batches(len(X), batch_size)
             for batch_index, (batch_start, batch_end) in enumerate(batches):
                 if shuffle:
                     batch_ids = index_array[batch_start:batch_end]
                 else:
                     batch_ids = slice(batch_start, batch_end)
+                seen += len(batch_ids)
                 X_batch = X[batch_ids]
                 y_batch = y[batch_ids]
 
                 if show_accuracy:
                     loss, acc = self._train_with_acc(X_batch, y_batch)
                     log_values = [('loss', loss), ('acc.', acc)]
+                    av_loss += loss * len(batch_ids)
+                    av_acc += acc * len(batch_ids)
                 else:
                     loss = self._train(X_batch, y_batch)
                     log_values = [('loss', loss)]
+                    av_loss += loss * len(batch_ids)
 
                 # validation
                 if do_validation and (batch_index == len(batches) - 1):
@@ -168,6 +230,16 @@ class Sequential(object):
                 
             if do_snapshots:
                 self.save_weights(os.path.join(snapshot_folder, 'snapshot_{}.hdf5'.format(epoch)))
+
+            history['epoch'].append(epoch)
+            history['loss'].append(av_loss/seen)
+            if do_validation:
+                history['val_loss'].append(float(val_loss))
+            if show_accuracy:
+                history['acc'].append(av_acc/seen)
+                if do_validation:
+                    history['val_acc'].append(float(val_acc))
+        return history
 
             
     def predict_proba(self, X, batch_size=128, verbose=1):
@@ -270,5 +342,3 @@ class Sequential(object):
             weights = [g['param_{}'.format(p)] for p in range(g.attrs['nb_params'])]
             self.layers[k].set_weights(weights)
         f.close()
-
-

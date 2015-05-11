@@ -15,6 +15,7 @@ class Embedding(Layer):
         @out_dim: size of dense representation
     '''
     def __init__(self, input_dim, output_dim, init='uniform', weights=None):
+        super(Embedding,self).__init__()
         self.init = initializations.get(init)
         self.input_dim = input_dim
         self.output_dim = output_dim
@@ -26,7 +27,7 @@ class Embedding(Layer):
         if weights is not None:
             self.set_weights(weights)
 
-    def output(self, train=False):
+    def get_output(self, train=False):
         X = self.get_input(train)
         out = self.W[X]
         return out
@@ -64,6 +65,7 @@ class WordContextProduct(Layer):
     '''
     def __init__(self, input_dim, proj_dim=128, 
         init='uniform', activation='sigmoid', weights=None):
+        super(WordContextProduct,self).__init__()
         self.input_dim = input_dim
         self.proj_dim = proj_dim
         self.init = initializations.get(init)
@@ -81,7 +83,7 @@ class WordContextProduct(Layer):
             self.set_weights(weights)
 
 
-    def output(self, train=False):
+    def get_output(self, train=False):
         X = self.get_input(train)
         w = self.W_w[X[:, 0]] # nb_samples, proj_dim
         c = self.W_c[X[:, 1]] # nb_samples, proj_dim
