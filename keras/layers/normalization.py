@@ -2,71 +2,68 @@ from ..layers.core import Layer
 from ..utils.theano_utils import shared_zeros
 from .. import initializations
 
-import theano, numpy
+import theano.tensor as T
 
 class BatchNormalization(Layer):
     '''
         Reference: 
             Batch Normalization: Accelerating Deep Network Training by Reducing Internal Covariate Shift
                 http://arxiv.org/pdf/1502.03167v3.pdf
+
+            mode: 0 -> featurewise normalization
+                  1 -> samplewise normalization (may sometimes outperform featurewise mode)
+
+            momentum: momentum term in the computation of a running estimate of the mean and std of the data
     '''
-    def __init__(self, input_shape, epsilon=1e-6, weights=None):
+    def __init__(self, input_shape, epsilon=1e-6, mode=0, momentum=0.9, weights=None):
+        super(BatchNormalization,self).__init__()
         self.init = initializations.get("uniform")
         self.input_shape = input_shape
         self.epsilon = epsilon
+        self.mode = mode
+        self.momentum = momentum
 
         self.gamma = self.init((self.input_shape))
         self.beta = shared_zeros(self.input_shape)
 
-        self.data_mean = shared_zeros(self.input_shape)
-        self.data_std = shared_zeros(self.input_shape)
+        self.running_mean = None
+        self.running_std = None
 
         self.params = [self.gamma, self.beta]
         if weights is not None:
             self.set_weights(weights)
 
-    def output(self, train):
+    def get_output(self, train):
         X = self.get_input(train)
-        if train:
-            X_normed = (X - X.mean(keepdims=True)) / (X.std(keepdims=True) + self.epsilon)
-        else:
-            X_normed = (X - self.data_mean) / (self.data_std + self.epsilon)
+
+        if self.mode == 0:
+            if train:
+                m = X.mean(axis=0)
+                # manual computation of std to prevent NaNs
+                std = T.mean((X-m)**2 + self.epsilon, axis=0) ** 0.5
+                X_normed = (X - m) / (std + self.epsilon)
+
+                if self.running_mean is None:
+                    self.running_mean = m
+                    self.running_std = std
+                else:
+                    self.running_mean *= self.momentum
+                    self.running_mean += (1-self.momentum) * m
+                    self.running_std *= self.momentum
+                    self.running_std += (1-self.momentum) * std
+            else:
+                X_normed = (X - self.running_mean) / (self.running_std + self.epsilon)
+
+        elif self.mode == 1:
+            m = X.mean(axis=-1, keepdims=True)
+            std = X.std(axis=-1, keepdims=True)
+            X_normed = (X - m) / (std + self.epsilon)
+
         out = self.gamma * X_normed + self.beta
         return out
 
     def get_config(self):
         return {"name":self.__class__.__name__,
             "input_shape":self.input_shape,
-            "epsilon":self.epsilon}
-
-def set_activation_stats(model, X, batch_size, shuffle=False, verbose=False):
-    from keras.models import make_batches
-    # Find all BatchNormalization layers in the model
-    bn_layers = [layer for layer in model.layers if (layer.__class__.__name__ == BatchNormalization.__name__)]
-    for layer in bn_layers:
-        if verbose:
-            print('Setting activation statistics for layer {}'.format(layer))
-        activations = layer.get_input(train=False)
-        activation_stats = theano.function([model.layers[0].input], outputs=[activations.mean(axis=0), activations.std(axis=0)])
-        
-        # Prepare training data and compute activation statistics
-        index_array = numpy.arange(len(X))
-        if shuffle:
-            numpy.random.shuffle(index_array)
-        batches = make_batches(len(X), batch_size)
-        X_shape = list(layer.input_shape)
-        X_shape.insert(0, len(batches))
-        batch_means = numpy.empty(X_shape)
-        batch_stds = numpy.empty(X_shape)
-
-        for batch_index, (batch_start, batch_end) in enumerate(batches):
-            if shuffle:
-                batch_ids = index_array[batch_start:batch_end]
-            else:
-                batch_ids = slice(batch_start, batch_end)
-            X_batch = X[batch_ids]
-            batch_means[batch_index,...], batch_stds[batch_index,...] = activation_stats(X_batch)
-        layer.data_mean.set_value(batch_means.mean(axis=0))
-        layer.data_std.set_value((batch_size/(batch_size-1))*batch_stds.mean(axis=0))
-    return
-
+            "epsilon":self.epsilon,
+            "mode":self.mode}

@@ -31,6 +31,8 @@ from sklearn.preprocessing import StandardScaler
         - with smaller layers, largers layers
         - with more layers, less layers
         - with different optimizers (SGD+momentum+decay is probably better than Adam!)
+
+    Get the data from Kaggle: https://www.kaggle.com/c/otto-group-product-classification-challenge/data
 '''
 
 np.random.seed(1337) # for reproducibility
@@ -53,7 +55,7 @@ def preprocess_data(X, scaler=None):
     X = scaler.transform(X)
     return X, scaler
 
-def preprocess_labels(y, encoder=None, categorical=True):
+def preprocess_labels(labels, encoder=None, categorical=True):
     if not encoder:
         encoder = LabelEncoder()
         encoder.fit(labels)
@@ -65,7 +67,7 @@ def preprocess_labels(y, encoder=None, categorical=True):
 def make_submission(y_prob, ids, encoder, fname):
     with open(fname, 'w') as f:
         f.write('id,')
-        f.write(','.join(encoder.classes_))
+        f.write(','.join([str(i) for i in encoder.classes_]))
         f.write('\n')
         for i, probs in zip(ids, y_prob):
             probas = ','.join([i] + [str(p) for p in probs.tolist()])
@@ -113,7 +115,7 @@ model.compile(loss='categorical_crossentropy', optimizer="adam")
 
 print("Training model...")
 
-model.fit(X, y, nb_epoch=20, batch_size=16, validation_split=0.15)
+model.fit(X, y, nb_epoch=20, batch_size=128, validation_split=0.15)
 
 print("Generating submission...")
 
