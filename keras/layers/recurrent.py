@@ -294,7 +294,7 @@ class SimpleRNN(Recurrent):
         input_shape = self.input_shape
         if not input_shape[0]:
             raise Exception('If a RNN is stateful, a complete ' +
-                            'input_shape must be provided (including batch size).')
+                            'batch_input_shape must be provided.')
         if hasattr(self, 'states'):
             K.set_value(self.states[0],
                         np.zeros((input_shape[0], self.output_dim)))
@@ -441,7 +441,7 @@ class GRU(Recurrent):
         input_shape = self.input_shape
         if not input_shape[0]:
             raise Exception('If a RNN is stateful, a complete ' +
-                            'input_shape must be provided (including batch size).')
+                            'batch_input_shape must be provided.')
         if hasattr(self, 'states'):
             K.set_value(self.states[0],
                         np.zeros((input_shape[0], self.output_dim)))
@@ -622,7 +622,7 @@ class LSTM(Recurrent):
         input_shape = self.input_shape
         if not input_shape[0]:
             raise Exception('If a RNN is stateful, a complete ' +
-                            'input_shape must be provided (including batch size).')
+                            'batch_input_shape must be provided.')
         if hasattr(self, 'states'):
             K.set_value(self.states[0],
                         np.zeros((input_shape[0], self.output_dim)))
